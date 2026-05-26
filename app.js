@@ -25,6 +25,36 @@ const DEFAULT_REST_SECS = 180; // 3 minutes — canonical StrongLifts default
 const DEFAULT_UNIT = 'lb';     // 'lb' or 'kg'
 const STORAGE_KEY = 'fivebyfive.v1';
 
+// Weekday helpers (JS Date.getDay(): 0=Sun ... 6=Sat)
+const WEEKDAYS = [
+  { idx: 0, short: 'Sun', long: 'Sunday' },
+  { idx: 1, short: 'Mon', long: 'Monday' },
+  { idx: 2, short: 'Tue', long: 'Tuesday' },
+  { idx: 3, short: 'Wed', long: 'Wednesday' },
+  { idx: 4, short: 'Thu', long: 'Thursday' },
+  { idx: 5, short: 'Fri', long: 'Friday' },
+  { idx: 6, short: 'Sat', long: 'Saturday' },
+];
+const DEFAULT_SCHEDULE_DAYS = [1, 3, 5]; // Mon/Wed/Fri — canonical StrongLifts
+
+// Canonical StrongLifts accessory list (source: stronglifts.com).
+// Used to seed the picker; user can add custom entries.
+const ACCESSORY_PRESETS = [
+  { name: 'Pullups',              target: '3×8 @ bw' },
+  { name: 'Chinups',              target: '3×8 @ bw' },
+  { name: 'Dips',                 target: '3×8 @ bw' },
+  { name: 'Hanging Knee Raises',  target: '3×8' },
+  { name: 'Planks',               target: '3×30 sec' },
+  { name: 'Barbell Curl',         target: '3×8' },
+  { name: 'Skullcrushers',        target: '3×8' },
+  { name: 'Hyperextensions',      target: '2×8' },
+  { name: 'Weighted Situps',      target: '3×8' },
+  { name: 'Cable Tricep Pushdown',target: '3×10' },
+  { name: 'Lateral Raises',       target: '3×12' },
+  { name: 'Face Pulls',           target: '3×12' },
+  { name: 'Calf Raises',          target: '3×12' },
+];
+
 // Available plates per side (lb). User can edit in settings later if needed.
 const DEFAULT_PLATES_LB = [45, 35, 25, 10, 5, 2.5];
 const DEFAULT_PLATES_KG = [25, 20, 15, 10, 5, 2.5, 1.25];
@@ -46,9 +76,10 @@ function defaultState() {
     barWeight: 45,
     plates: DEFAULT_PLATES_LB.slice(),
     restSecs: DEFAULT_REST_SECS,
-    nextWorkout: 'A',        // alternates A/B
+    nextWorkout: 'A',                          // alternates A/B
+    scheduleDays: DEFAULT_SCHEDULE_DAYS.slice(), // weekday indexes the user trains
     exercises,
-    activeSession: null,     // { workout: 'A', startedAt, lifts: { [key]: { weight, sets: [reps...] } } }
+    activeSession: null,     // { workout: 'A', startedAt, lifts: { [key]: { sets: [reps...] } } }
     history: [],             // [ { date, workout, lifts: [{key, weight, sets, success}] } ]
   };
 }
@@ -200,6 +231,67 @@ function fmtTime(secs) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+// ---------- Date helpers ----------
+
+// Local YYYY-MM-DD key (avoids UTC drift that breaks "today" comparisons)
+function dateKey(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+function startOfDay(d) { const x = new Date(d); x.setHours(0,0,0,0); return x; }
+function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+function startOfWeek(d) {
+  // Week starts Sunday to match the WEEKDAYS table
+  const x = startOfDay(d);
+  x.setDate(x.getDate() - x.getDay());
+  return x;
+}
+
+// History indexed by local date key for fast lookup in the calendar.
+function historyByDate() {
+  const out = {};
+  for (const h of state.history) {
+    const k = dateKey(new Date(h.date));
+    if (!out[k]) out[k] = h;
+  }
+  return out;
+}
+
+// Project which scheduled days from `from` (inclusive) over `days` calendar days
+// will host an upcoming workout, and which (A/B) each will be.
+// Skips days that already have a logged session in history (those are "done").
+function projectSchedule(from, days) {
+  const logged = historyByDate();
+  const fromKey = dateKey(from);
+  const result = {}; // dateKey → 'A' | 'B'
+  let nextAB = state.nextWorkout;
+  for (let i = 0; i < days; i++) {
+    const d = addDays(from, i);
+    const k = dateKey(d);
+    if (k < fromKey) continue;
+    if (logged[k]) continue; // already done — projection skips it
+    if (state.scheduleDays.includes(d.getDay())) {
+      result[k] = nextAB;
+      nextAB = nextAB === 'A' ? 'B' : 'A';
+    }
+  }
+  return result;
+}
+
+function swapNextWorkout() {
+  state.nextWorkout = state.nextWorkout === 'A' ? 'B' : 'A';
+  // If there's an active session that hasn't logged any sets, switch it too.
+  if (state.activeSession) {
+    const any = Object.values(state.activeSession.lifts).some(l => l.sets.some(s => s != null));
+    if (!any) {
+      state.activeSession = null; // startSessionIfNeeded will recreate with new A/B
+    }
+  }
+  saveState();
+}
+
 // ---------- Session helpers ----------
 
 function startSessionIfNeeded() {
@@ -213,8 +305,15 @@ function startSessionIfNeeded() {
     workout,
     startedAt: Date.now(),
     lifts,
+    accessories: [], // [{ name, target, notes, done }]
   };
   saveState();
+}
+
+function ensureAccessoriesArray() {
+  if (state.activeSession && !state.activeSession.accessories) {
+    state.activeSession.accessories = [];
+  }
 }
 
 // Single source of truth for the weight to use on a given lift right now.
@@ -272,6 +371,9 @@ function finishSession() {
     date: new Date(state.activeSession.startedAt).toISOString(),
     workout: state.activeSession.workout,
     lifts: liftsLog,
+    accessories: (state.activeSession.accessories || []).map(a => ({
+      name: a.name, target: a.target || '', notes: a.notes || '', done: !!a.done,
+    })),
   });
   if (state.history.length > 500) state.history.length = 500;
   state.nextWorkout = state.activeSession.workout === 'A' ? 'B' : 'A';
@@ -316,6 +418,7 @@ function render() {
   const r = root();
   r.innerHTML = '';
   if (currentTab === 'workout') r.appendChild(renderWorkoutTab());
+  else if (currentTab === 'calendar') r.appendChild(renderCalendarTab());
   else if (currentTab === 'history') r.appendChild(renderHistoryTab());
   else if (currentTab === 'settings') r.appendChild(renderSettingsTab());
   renderRestBar();
@@ -337,12 +440,24 @@ function renderWorkoutTab() {
         `${lifts.map(k => EXERCISES[k].name).join(' · ')}`
       ]),
     ]),
-    el('div', { class: 'day-tag' }, [workoutName]),
+    el('button', {
+      class: 'day-tag day-tag-btn',
+      title: 'Swap A↔B for this session',
+      onClick: () => {
+        if (!confirm(`Switch to Workout ${session.workout === 'A' ? 'B' : 'A'}? Any unlogged sets will reset.`)) return;
+        swapNextWorkout();
+        render();
+      },
+    }, [workoutName, ' ⇆']),
   ]));
 
   for (const key of lifts) {
     wrap.appendChild(renderExerciseCard(key));
   }
+
+  // Accessory work
+  ensureAccessoriesArray();
+  wrap.appendChild(renderAccessoriesCard());
 
   // Footer actions
   const complete = isSessionComplete();
@@ -531,6 +646,264 @@ function renderRestBar() {
   ]));
 }
 
+// ----- Accessories -----
+
+function renderAccessoriesCard() {
+  const card = el('div', { class: 'card' });
+  card.appendChild(el('div', { class: 'row between' }, [
+    el('h2', { style: 'margin:0; color: var(--text); font-size:17px' }, ['Accessories']),
+    el('button', {
+      class: 'btn sm',
+      onClick: () => openAccessoryPicker(),
+    }, ['+ Add']),
+  ]));
+
+  const list = state.activeSession.accessories;
+  if (!list || list.length === 0) {
+    card.appendChild(el('p', { class: 'small muted', style: 'margin-top:8px' }, [
+      'Optional. Tap + Add to log pullups, dips, curls, etc.',
+    ]));
+    return card;
+  }
+
+  for (let i = 0; i < list.length; i++) {
+    const acc = list[i];
+    card.appendChild(renderAccessoryRow(acc, i));
+  }
+  return card;
+}
+
+function renderAccessoryRow(acc, idx) {
+  const row = el('div', { class: 'acc-row' });
+
+  // Top line: done toggle + name + target + remove
+  row.appendChild(el('div', { class: 'row between acc-head' }, [
+    el('div', { class: 'row', style: 'gap:8px; flex:1; min-width:0' }, [
+      el('button', {
+        class: `acc-check ${acc.done ? 'on' : ''}`,
+        onClick: () => {
+          acc.done = !acc.done;
+          saveState();
+          render();
+        },
+      }, [acc.done ? '✓' : '']),
+      el('div', { class: 'acc-text' }, [
+        el('div', { class: 'acc-name' }, [acc.name]),
+        acc.target ? el('div', { class: 'small muted' }, [acc.target]) : null,
+      ]),
+    ]),
+    el('button', {
+      class: 'btn ghost sm',
+      title: 'Remove',
+      onClick: () => {
+        state.activeSession.accessories.splice(idx, 1);
+        saveState();
+        render();
+      },
+    }, ['✕']),
+  ]));
+
+  // Notes textarea
+  row.appendChild(el('textarea', {
+    class: 'acc-notes',
+    placeholder: 'Notes (optional)',
+    rows: '2',
+    onInput: (e) => {
+      acc.notes = e.target.value;
+      saveState();
+    },
+  }, [acc.notes || '']));
+
+  return row;
+}
+
+function openAccessoryPicker() {
+  const modalBg = el('div', { class: 'modal-bg', onClick: (e) => {
+    if (e.target === modalBg) document.body.removeChild(modalBg);
+  }});
+
+  const addAccessory = (name, target) => {
+    ensureAccessoriesArray();
+    state.activeSession.accessories.push({
+      name,
+      target: target || '',
+      notes: '',
+      done: false,
+    });
+    saveState();
+    document.body.removeChild(modalBg);
+    render();
+  };
+
+  const list = el('div', { class: 'acc-preset-list' });
+  for (const p of ACCESSORY_PRESETS) {
+    list.appendChild(el('button', {
+      class: 'btn acc-preset',
+      onClick: () => addAccessory(p.name, p.target),
+    }, [
+      el('div', { class: 'acc-name' }, [p.name]),
+      el('div', { class: 'small muted' }, [p.target]),
+    ]));
+  }
+
+  // Custom entry
+  let customName = '';
+  let customTarget = '';
+  const customCard = el('div', { class: 'acc-custom' }, [
+    el('h3', { style: 'margin:14px 0 6px' }, ['Custom']),
+    el('input', {
+      type: 'text', placeholder: 'Exercise name',
+      onInput: (e) => { customName = e.target.value; },
+    }),
+    el('input', {
+      type: 'text', placeholder: 'Target (e.g. 3×10) — optional',
+      style: 'margin-top:6px',
+      onInput: (e) => { customTarget = e.target.value; },
+    }),
+    el('button', {
+      class: 'btn primary full', style: 'margin-top:8px',
+      onClick: () => {
+        if (!customName.trim()) return;
+        addAccessory(customName.trim(), customTarget.trim());
+      },
+    }, ['Add custom']),
+  ]);
+
+  const modal = el('div', { class: 'modal' }, [
+    el('h3', {}, ['Add accessory']),
+    el('p', { class: 'small muted' }, ['Tap a preset or scroll down for custom.']),
+    list,
+    customCard,
+    el('div', { class: 'row', style: 'margin-top:12px' }, [
+      el('button', {
+        class: 'btn ghost full',
+        onClick: () => document.body.removeChild(modalBg),
+      }, ['Cancel']),
+    ]),
+  ]);
+  modalBg.appendChild(modal);
+  document.body.appendChild(modalBg);
+}
+
+// ----- Calendar tab -----
+
+function renderCalendarTab() {
+  const wrap = el('div');
+  const today = startOfDay(new Date());
+  const todayKey = dateKey(today);
+
+  // Show current week + next week (14 days)
+  const weekStart = startOfWeek(today);
+  const upcoming = projectSchedule(today, 21);
+  const logged = historyByDate();
+
+  const scheduledSummary = state.scheduleDays.length
+    ? state.scheduleDays.sort().map(i => WEEKDAYS[i].short).join(' · ')
+    : 'No days selected';
+
+  wrap.appendChild(el('div', { class: 'header' }, [
+    el('div', {}, [
+      el('h1', {}, ['Calendar']),
+      el('p', { class: 'small' }, [scheduledSummary]),
+    ]),
+    el('div', { class: 'day-tag' }, [`Next: Workout ${state.nextWorkout}`]),
+  ]));
+
+  // Render two weeks
+  for (let w = 0; w < 2; w++) {
+    const wkStart = addDays(weekStart, w * 7);
+    const card = el('div', { class: 'card' });
+    card.appendChild(el('div', { class: 'cal-week-label' }, [
+      w === 0 ? 'This week' : 'Next week',
+      el('span', { class: 'small muted', style: 'margin-left:8px' }, [
+        `${wkStart.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${addDays(wkStart, 6).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`,
+      ]),
+    ]));
+
+    // Weekday header
+    const headRow = el('div', { class: 'cal-grid cal-head' });
+    for (const wd of WEEKDAYS) {
+      headRow.appendChild(el('div', { class: 'cal-head-cell' }, [wd.short]));
+    }
+    card.appendChild(headRow);
+
+    // Day cells
+    const grid = el('div', { class: 'cal-grid' });
+    for (let i = 0; i < 7; i++) {
+      const d = addDays(wkStart, i);
+      const k = dateKey(d);
+      const isToday = k === todayKey;
+      const isPast = k < todayKey;
+      const isScheduled = state.scheduleDays.includes(d.getDay());
+      const loggedSession = logged[k];
+      const projected = upcoming[k];
+
+      let cls = 'cal-cell';
+      let label = String(d.getDate());
+      let badge = null;
+
+      if (loggedSession) {
+        cls += ' done';
+        badge = el('div', { class: 'cal-badge' }, [`✓ ${loggedSession.workout}`]);
+      } else if (projected) {
+        cls += projected === 'A' ? ' workout-a' : ' workout-b';
+        badge = el('div', { class: 'cal-badge' }, [projected]);
+      } else if (isScheduled && isPast) {
+        cls += ' missed';
+        badge = el('div', { class: 'cal-badge muted' }, ['—']);
+      } else if (isScheduled) {
+        cls += ' rest-scheduled';
+      }
+      if (isToday) cls += ' today';
+
+      const cell = el('div', { class: cls, title: d.toLocaleDateString() }, [
+        el('div', { class: 'cal-date' }, [label]),
+        badge,
+      ]);
+
+      // Tap a projected day → jump to Workout tab (only works for today/future)
+      if (projected && !isPast) {
+        cell.addEventListener('click', () => {
+          currentTab = 'workout';
+          for (const b of document.querySelectorAll('#tabbar .tab')) {
+            b.classList.toggle('active', b.dataset.tab === 'workout');
+          }
+          render();
+        });
+      }
+
+      grid.appendChild(cell);
+    }
+    card.appendChild(grid);
+    wrap.appendChild(card);
+  }
+
+  // Legend
+  wrap.appendChild(el('div', { class: 'card cal-legend' }, [
+    el('div', { class: 'row', style: 'gap:14px; flex-wrap:wrap' }, [
+      el('span', { class: 'legend-chip workout-a' }, ['A']),
+      el('span', { class: 'small muted' }, ['= Squat / Bench / Row']),
+    ]),
+    el('div', { class: 'row', style: 'gap:14px; flex-wrap:wrap; margin-top:6px' }, [
+      el('span', { class: 'legend-chip workout-b' }, ['B']),
+      el('span', { class: 'small muted' }, ['= Squat / OHP / Deadlift']),
+    ]),
+    el('div', { class: 'row', style: 'gap:14px; flex-wrap:wrap; margin-top:6px' }, [
+      el('span', { class: 'legend-chip done' }, ['✓']),
+      el('span', { class: 'small muted' }, ['= Session logged']),
+    ]),
+    el('div', { class: 'row', style: 'gap:14px; flex-wrap:wrap; margin-top:6px' }, [
+      el('span', { class: 'legend-chip missed' }, ['—']),
+      el('span', { class: 'small muted' }, ['= Missed scheduled day']),
+    ]),
+    el('p', { class: 'small muted', style: 'margin-top:10px' }, [
+      'Tap a future workout day to jump to the Workout tab. Use the A⇆B button on the Workout tab to swap which workout is next.',
+    ]),
+  ]));
+
+  return wrap;
+}
+
 // ----- History tab -----
 
 function renderHistoryTab() {
@@ -563,6 +936,17 @@ function renderHistoryTab() {
           el('span', { class: `result ${l.success ? 'ok' : 'bad'}` }, [l.success ? '✓' : '✗']),
         ]),
       ])),
+      ...((h.accessories && h.accessories.length) ? [
+        el('div', { class: 'small muted', style: 'margin-top:8px; padding-top:8px; border-top: 1px dashed var(--border)' }, ['Accessories']),
+        ...h.accessories.map(a => el('div', { class: 'line acc-history' }, [
+          el('span', {}, [
+            (a.done ? '✓ ' : '○ '),
+            a.name,
+            a.target ? ` (${a.target})` : '',
+          ]),
+          a.notes ? el('span', { class: 'small muted right', style: 'max-width:60%; overflow:hidden; text-overflow:ellipsis' }, [a.notes]) : null,
+        ])),
+      ] : []),
     ]);
     wrap.appendChild(item);
   }
@@ -619,6 +1003,37 @@ function renderSettingsTab() {
     })),
   ]);
   wrap.appendChild(general);
+
+  // Schedule (which weekdays you train)
+  const sched = el('div', { class: 'card' }, [
+    el('h2', {}, ['Schedule']),
+    el('p', { class: 'small muted' }, [
+      'Pick the days of the week you train. Workouts alternate A/B in order.',
+    ]),
+    (() => {
+      const row = el('div', { class: 'days-row' });
+      for (const wd of WEEKDAYS) {
+        const selected = state.scheduleDays.includes(wd.idx);
+        const btn = el('button', {
+          class: `day-chip ${selected ? 'on' : ''}`,
+          onClick: () => {
+            const i = state.scheduleDays.indexOf(wd.idx);
+            if (i >= 0) state.scheduleDays.splice(i, 1);
+            else state.scheduleDays.push(wd.idx);
+            state.scheduleDays.sort();
+            saveState();
+            render();
+          },
+        }, [wd.short]);
+        row.appendChild(btn);
+      }
+      return row;
+    })(),
+    el('p', { class: 'small muted', style: 'margin-top:8px' }, [
+      `Training ${state.scheduleDays.length}× per week`,
+    ]),
+  ]);
+  wrap.appendChild(sched);
 
   // Per-exercise
   const exCard = el('div', { class: 'card' }, [

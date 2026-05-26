@@ -220,3 +220,175 @@ input[type="number"], input[type="text"], select {
 .modal h3 { margin: 0 0 12px; }
 .modal .grid-5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 12px; }
 .modal .grid-5 .btn { padding: 14px 0; font-size: 18px; font-weight: 800; }
+
+/* === A↔B swap on workout header === */
+.day-tag-btn {
+  appearance: none;
+  border: 1px solid var(--accent);
+  cursor: pointer;
+  font-family: inherit;
+}
+.day-tag-btn:active { transform: scale(0.97); }
+
+/* === Calendar === */
+.cal-week-label { font-weight: 700; margin-bottom: 8px; }
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+.cal-head { margin-bottom: 4px; }
+.cal-head-cell {
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 700;
+  padding: 2px 0;
+}
+.cal-cell {
+  aspect-ratio: 1 / 1;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  font-size: 13px;
+  color: var(--muted);
+  position: relative;
+  -webkit-tap-highlight-color: transparent;
+}
+.cal-cell .cal-date { font-weight: 700; font-size: 13px; }
+.cal-cell .cal-badge {
+  font-size: 11px;
+  font-weight: 800;
+  margin-top: 2px;
+}
+.cal-cell.workout-a {
+  background: rgba(59,130,246,0.18);
+  border-color: var(--accent);
+  color: #bfdbfe;
+  cursor: pointer;
+}
+.cal-cell.workout-b {
+  background: rgba(168,85,247,0.18);
+  border-color: #a855f7;
+  color: #e9d5ff;
+  cursor: pointer;
+}
+.cal-cell.workout-a:active, .cal-cell.workout-b:active { transform: scale(0.97); }
+.cal-cell.done {
+  background: rgba(34,197,94,0.18);
+  border-color: var(--good);
+  color: var(--good);
+}
+.cal-cell.missed {
+  background: rgba(239,68,68,0.10);
+  border-color: rgba(239,68,68,0.4);
+  color: var(--bad);
+}
+.cal-cell.rest-scheduled {
+  /* Scheduled but no projected workout (e.g. already done in another slot) */
+  border-style: dashed;
+}
+.cal-cell.today {
+  outline: 2px solid var(--text);
+  outline-offset: -2px;
+}
+.cal-legend .legend-chip {
+  display: inline-block;
+  min-width: 30px; padding: 2px 8px;
+  border-radius: 6px;
+  font-weight: 800; font-size: 12px;
+  text-align: center;
+  border: 1px solid var(--border);
+}
+.cal-legend .legend-chip.workout-a { background: rgba(59,130,246,0.18); border-color: var(--accent); color: #bfdbfe; }
+.cal-legend .legend-chip.workout-b { background: rgba(168,85,247,0.18); border-color: #a855f7; color: #e9d5ff; }
+.cal-legend .legend-chip.done { background: rgba(34,197,94,0.18); border-color: var(--good); color: var(--good); }
+.cal-legend .legend-chip.missed { background: rgba(239,68,68,0.10); border-color: rgba(239,68,68,0.4); color: var(--bad); }
+
+/* === Day-of-week chips (Settings → Schedule) === */
+.days-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+  margin-top: 8px;
+}
+.day-chip {
+  appearance: none;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 10px;
+  padding: 12px 0;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.day-chip.on {
+  background: rgba(59,130,246,0.22);
+  border-color: var(--accent);
+  color: #bfdbfe;
+}
+.day-chip:active { transform: scale(0.96); }
+
+/* === Accessories === */
+.acc-row {
+  border-top: 1px solid var(--border);
+  padding: 10px 0;
+}
+.acc-row:first-of-type { border-top: none; padding-top: 8px; }
+.acc-head { gap: 10px; }
+.acc-check {
+  appearance: none;
+  width: 28px; height: 28px;
+  border-radius: 8px;
+  border: 1.5px solid var(--border);
+  background: var(--surface-2);
+  color: var(--good);
+  font-weight: 800; font-size: 16px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.acc-check.on {
+  background: rgba(34,197,94,0.18);
+  border-color: var(--good);
+}
+.acc-text { min-width: 0; }
+.acc-name { font-weight: 700; font-size: 15px; }
+.acc-notes {
+  width: 100%;
+  margin-top: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+
+/* === Accessory picker modal === */
+.acc-preset-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.acc-preset {
+  text-align: left;
+  padding: 10px 12px;
+  line-height: 1.2;
+}
+.acc-preset .acc-name { font-size: 14px; }
+.acc-custom input {
+  margin-top: 4px;
+}
+.acc-history { padding-left: 4px; }

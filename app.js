@@ -207,10 +207,7 @@ function startSessionIfNeeded() {
   const workout = state.nextWorkout;
   const lifts = {};
   for (const key of WORKOUTS[workout]) {
-    lifts[key] = {
-      weight: state.exercises[key].weight,
-      sets: [], // array of rep counts (length = sets.length)
-    };
+    lifts[key] = { sets: [] };
   }
   state.activeSession = {
     workout,
@@ -218,6 +215,11 @@ function startSessionIfNeeded() {
     lifts,
   };
   saveState();
+}
+
+// Single source of truth for the weight to use on a given lift right now.
+function currentWeight(exerciseKey) {
+  return state.exercises[exerciseKey].weight;
 }
 
 function setResult(exerciseKey, setIndex, reps) {
@@ -256,13 +258,12 @@ function finishSession() {
     const lift = state.activeSession.lifts[key];
     const def = EXERCISES[key];
     const success = isExerciseSuccess(key);
-    // Apply progression based on the weight that was actually used this session
-    state.exercises[key].weight = lift.weight; // reset baseline before progressing
+    const usedWeight = currentWeight(key); // capture BEFORE applyResult mutates it
     applyResult(key, success);
     liftsLog.push({
       key,
       name: def.name,
-      weight: lift.weight,
+      weight: usedWeight,
       sets: lift.sets.slice(),
       success,
     });
@@ -384,7 +385,7 @@ function renderExerciseCard(key) {
   const def = EXERCISES[key];
   const ex = state.exercises[key];
   const lift = state.activeSession.lifts[key];
-  const w = lift.weight;
+  const w = currentWeight(key);
 
   const card = el('div', { class: 'card' });
 

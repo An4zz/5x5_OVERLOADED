@@ -322,6 +322,76 @@ input[type="number"], input[type="text"], select {
   border-color: var(--warn);
   color: var(--warn);
 }
+
+/* === Export modal === */
+.export-text {
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  margin-top: 8px;
+}
+
+/* === Profile selector === */
+body.no-tabs .tabbar { display: none; }
+body.no-tabs #app { padding-bottom: calc(var(--safe-bot) + 32px); }
+
+.selector { max-width: 520px; margin: 0 auto; }
+.selector-title {
+  text-align: center;
+  margin: 24px 0 4px;
+  font-size: 28px;
+}
+.selector-sub {
+  text-align: center;
+  margin-bottom: 24px;
+}
+.profile-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.profile-tile {
+  appearance: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 20px 14px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.08s ease, background 0.15s ease;
+}
+.profile-tile:active { transform: scale(0.97); }
+.profile-tile.guest { border-style: dashed; }
+.profile-tile.add {
+  background: transparent;
+  color: var(--muted);
+  border-style: dashed;
+}
+.profile-avatar {
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: white;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px; font-weight: 800;
+}
+.profile-tile.guest .profile-avatar { background: var(--surface-2); color: var(--muted); border: 1px solid var(--border); }
+.profile-avatar.add { background: var(--surface-2); color: var(--muted); border: 1px dashed var(--border); }
+.profile-name { font-size: 16px; font-weight: 700; }
+.profile-meta { font-size: 12px; }
 .cal-legend .legend-chip {
   display: inline-block;
   min-width: 30px; padding: 2px 8px;

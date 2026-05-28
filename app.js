@@ -23,7 +23,9 @@ const WORKOUTS = {
 
 const DEFAULT_REST_SECS = 180; // 3 minutes — canonical StrongLifts default
 const DEFAULT_UNIT = 'lb';     // 'lb' or 'kg'
-const STORAGE_KEY = 'fivebyfive.v1';
+const STORAGE_KEY_V1 = 'fivebyfive.v1';   // legacy single-profile store (read-only, for migration)
+const STORAGE_KEY = 'fivebyfive.v2';      // profile-aware store
+const MAX_NAMED_PROFILES = 3;
 
 // Weekday helpers (JS Date.getDay(): 0=Sun ... 6=Sat)
 const WEEKDAYS = [
@@ -59,9 +61,14 @@ const ACCESSORY_PRESETS = [
 const DEFAULT_PLATES_LB = [45, 35, 25, 10, 5, 2.5];
 const DEFAULT_PLATES_KG = [25, 20, 15, 10, 5, 2.5, 1.25];
 
-// ---------- State ----------
+// ---------- State (profile-aware) ----------
+//
+// rootState wraps a list of profiles; each profile owns the full lifting dataset
+// (weights, schedule, history, etc.). `state` is rebound to the active profile's
+// data after the user picks a profile from the selector screen. All existing
+// state.foo references continue to work because the variable just re-points.
 
-function defaultState() {
+function defaultProfileData() {
   const exercises = {};
   for (const [key, def] of Object.entries(EXERCISES)) {
     exercises[key] = {
@@ -76,35 +83,135 @@ function defaultState() {
     barWeight: 45,
     plates: DEFAULT_PLATES_LB.slice(),
     restSecs: DEFAULT_REST_SECS,
-    nextWorkout: 'A',                          // alternates A/B
-    scheduleDays: DEFAULT_SCHEDULE_DAYS.slice(), // weekday indexes the user trains
+    nextWorkout: 'A',
+    scheduleDays: DEFAULT_SCHEDULE_DAYS.slice(),
     exercises,
-    activeSession: null,     // { workout: 'A', startedAt, lifts: { [key]: { sets: [reps...] } } }
-    history: [],             // [ { date, workout, lifts: [{key, weight, sets, success}] } ]
+    activeSession: null,
+    history: [],
   };
 }
 
-function loadState() {
+function mergeProfileData(data) {
+  const fresh = defaultProfileData();
+  return Object.assign({}, fresh, data || {}, {
+    exercises: Object.assign({}, fresh.exercises, (data && data.exercises) || {}),
+  });
+}
+
+function defaultRootState() {
+  return {
+    v: 2,
+    profiles: [
+      { id: 'guest', name: 'Guest', isGuest: true, data: defaultProfileData() },
+    ],
+  };
+}
+
+function loadRootState() {
+  // Try v2 first
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaultState();
-    const parsed = JSON.parse(raw);
-    // Shallow-merge defaults to be forward-compatible
-    const fresh = defaultState();
-    return Object.assign({}, fresh, parsed, {
-      exercises: Object.assign({}, fresh.exercises, parsed.exercises || {}),
-    });
-  } catch (e) {
-    return defaultState();
-  }
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      parsed.profiles = (parsed.profiles || []).map(p => ({
+        ...p, data: mergeProfileData(p.data),
+      }));
+      // Ensure Guest always exists
+      if (!parsed.profiles.some(p => p.isGuest)) {
+        parsed.profiles.push({ id: 'guest', name: 'Guest', isGuest: true, data: defaultProfileData() });
+      }
+      return parsed;
+    }
+  } catch (e) {}
+
+  // Migrate from v1 single-profile store
+  try {
+    const v1raw = localStorage.getItem(STORAGE_KEY_V1);
+    if (v1raw) {
+      const v1 = JSON.parse(v1raw);
+      return {
+        v: 2,
+        profiles: [
+          { id: 'p1', name: 'Me', data: mergeProfileData(v1) },
+          { id: 'guest', name: 'Guest', isGuest: true, data: defaultProfileData() },
+        ],
+      };
+    }
+  } catch (e) {}
+
+  return defaultRootState();
 }
 
 function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  // saveState persists the entire root state. Because `state` is a reference
+  // to rootState.profiles[X].data, mutations flow through automatically.
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(rootState));
 }
 
-let state = loadState();
+let rootState = loadRootState();
+// Persist immediately so any v1→v2 migration is saved on first load.
+try { localStorage.setItem(STORAGE_KEY, JSON.stringify(rootState)); } catch (e) {}
+let state = null;             // active profile's data; null while selector is shown
+let activeProfileId = null;
+let currentScreen = 'selector'; // 'selector' | 'tabs'
 let currentTab = 'workout';
+
+function selectProfile(id) {
+  const p = rootState.profiles.find(p => p.id === id);
+  if (!p) return;
+  state = p.data;
+  activeProfileId = id;
+  currentScreen = 'tabs';
+  currentTab = 'workout';
+  document.body.classList.remove('no-tabs');
+  // Reset tab active classes to "workout"
+  for (const b of document.querySelectorAll('#tabbar .tab')) {
+    b.classList.toggle('active', b.dataset.tab === 'workout');
+  }
+  render();
+}
+
+function exitToSelector() {
+  state = null;
+  activeProfileId = null;
+  currentScreen = 'selector';
+  document.body.classList.add('no-tabs');
+  render();
+}
+
+function createProfile(name) {
+  const trimmed = (name || '').trim().slice(0, 24);
+  if (!trimmed) return null;
+  const namedCount = rootState.profiles.filter(p => !p.isGuest).length;
+  if (namedCount >= MAX_NAMED_PROFILES) return null;
+  let i = 1;
+  while (rootState.profiles.some(p => p.id === `p${i}`)) i++;
+  const newP = { id: `p${i}`, name: trimmed, data: defaultProfileData() };
+  // Insert before guest so order stays named...named...guest
+  const guestIdx = rootState.profiles.findIndex(p => p.isGuest);
+  if (guestIdx >= 0) rootState.profiles.splice(guestIdx, 0, newP);
+  else rootState.profiles.push(newP);
+  saveState();
+  return newP;
+}
+
+function renameProfile(id, name) {
+  const p = rootState.profiles.find(p => p.id === id);
+  if (!p || p.isGuest) return;
+  const trimmed = (name || '').trim().slice(0, 24);
+  if (!trimmed) return;
+  p.name = trimmed;
+  saveState();
+}
+
+function deleteProfile(id) {
+  const idx = rootState.profiles.findIndex(p => p.id === id);
+  if (idx < 0) return;
+  if (rootState.profiles[idx].isGuest) return; // can't delete Guest
+  rootState.profiles.splice(idx, 1);
+  if (activeProfileId === id) exitToSelector();
+  else saveState();
+}
 
 // ---------- Program rules ----------
 
@@ -439,11 +546,77 @@ const root = () => document.getElementById('app');
 function render() {
   const r = root();
   r.innerHTML = '';
+  if (currentScreen === 'selector') {
+    r.appendChild(renderProfileSelector());
+    return;
+  }
+  if (!state) { exitToSelector(); return; }
   if (currentTab === 'workout') r.appendChild(renderWorkoutTab());
   else if (currentTab === 'calendar') r.appendChild(renderCalendarTab());
   else if (currentTab === 'history') r.appendChild(renderHistoryTab());
   else if (currentTab === 'settings') r.appendChild(renderSettingsTab());
   renderRestBar();
+}
+
+// ----- Profile selector screen -----
+
+function renderProfileSelector() {
+  const wrap = el('div', { class: 'selector' });
+  wrap.appendChild(el('h1', { class: 'selector-title' }, ["Who's lifting?"]));
+  wrap.appendChild(el('p', { class: 'small muted selector-sub' }, [
+    'Each profile has its own weights, schedule, and history.',
+  ]));
+
+  const named = rootState.profiles.filter(p => !p.isGuest);
+  const guest = rootState.profiles.find(p => p.isGuest);
+
+  const grid = el('div', { class: 'profile-grid' });
+  for (let i = 0; i < MAX_NAMED_PROFILES; i++) {
+    const p = named[i];
+    if (p) grid.appendChild(renderProfileTile(p));
+    else grid.appendChild(renderAddTile());
+  }
+  if (guest) grid.appendChild(renderProfileTile(guest));
+  wrap.appendChild(grid);
+
+  return wrap;
+}
+
+function renderProfileTile(p) {
+  const sessions = (p.data.history || []).length;
+  return el('button', {
+    class: `profile-tile ${p.isGuest ? 'guest' : ''}`,
+    onClick: () => selectProfile(p.id),
+  }, [
+    el('div', { class: 'profile-avatar' }, [(p.name || '?').slice(0, 1).toUpperCase()]),
+    el('div', { class: 'profile-name' }, [p.name]),
+    el('div', { class: 'profile-meta small muted' }, [
+      sessions === 0 ? 'no sessions yet' : `${sessions} session${sessions === 1 ? '' : 's'}`,
+    ]),
+  ]);
+}
+
+function renderAddTile() {
+  return el('button', {
+    class: 'profile-tile add',
+    onClick: () => promptCreateProfile(),
+  }, [
+    el('div', { class: 'profile-avatar add' }, ['+']),
+    el('div', { class: 'profile-name' }, ['Add profile']),
+    el('div', { class: 'profile-meta small muted' }, ['']),
+  ]);
+}
+
+function promptCreateProfile() {
+  const name = prompt('New profile name:');
+  if (name === null) return;
+  const p = createProfile(name);
+  if (!p) {
+    if ((name || '').trim() === '') return;
+    alert(`You can have up to ${MAX_NAMED_PROFILES} named profiles.`);
+    return;
+  }
+  selectProfile(p.id);
 }
 
 // ----- Workout tab -----
@@ -994,6 +1167,108 @@ function renderCalendarTab() {
   return wrap;
 }
 
+// ----- Workout export -----
+
+// Format a finished workout (history entry) as a plain-text block.
+// Order is: main lifts in the order they appear in the workout, then accessories.
+function formatWorkoutText(entry) {
+  const date = new Date(entry.date);
+  const dateStr = date.toLocaleDateString(undefined, {
+    weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+  });
+  const lines = [];
+  lines.push(`Workout ${entry.workout} — ${dateStr}`);
+  lines.push('');
+
+  let n = 1;
+  for (const l of entry.lifts) {
+    const setCount = l.sets.length;
+    const allSame = setCount > 0 && l.sets.every(s => s === l.sets[0]);
+    const setsText = allSame
+      ? `${setCount}×${l.sets[0]}`
+      : `sets: ${l.sets.join(', ')}`;
+    const flag = l.success ? '' : '  ✗';
+    lines.push(`${n}. ${l.name} — ${setsText} @ ${l.weight} ${state.unit}${flag}`);
+    n++;
+  }
+
+  if (entry.accessories && entry.accessories.length) {
+    lines.push('');
+    lines.push('Accessories:');
+    for (const a of entry.accessories) {
+      const tag = a.done ? '✓' : '○';
+      const target = a.target ? ` — ${a.target}` : '';
+      const notes = a.notes ? `  (${a.notes})` : '';
+      lines.push(`${n}. ${a.name}${target}  ${tag}${notes}`);
+      n++;
+    }
+  }
+
+  return lines.join('\n');
+}
+
+function openExportModal(entry) {
+  const text = formatWorkoutText(entry);
+  const modalBg = el('div', { class: 'modal-bg', onClick: (e) => {
+    if (e.target === modalBg) document.body.removeChild(modalBg);
+  }});
+
+  const ta = el('textarea', {
+    class: 'export-text',
+    readonly: true,
+    rows: '12',
+    onClick: (e) => e.target.select(),
+  }, [text]);
+
+  const status = el('div', { class: 'small muted', style: 'min-height:18px; margin-top:6px' });
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      status.textContent = '✓ Copied to clipboard';
+    } catch (err) {
+      // Fallback: select the textarea for manual copy
+      ta.select();
+      try { document.execCommand('copy'); status.textContent = '✓ Copied'; }
+      catch (e2) { status.textContent = 'Couldn\'t copy — long-press the text to copy manually'; }
+    }
+  };
+
+  const share = async () => {
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: `Workout ${entry.workout}`, text });
+        status.textContent = '';
+      } catch (e) {
+        // user cancelled — nothing to do
+      }
+    } else {
+      // No share API — fall back to copy
+      copy();
+    }
+  };
+
+  const buttons = [
+    el('button', { class: 'btn primary', onClick: copy }, ['Copy']),
+  ];
+  if (navigator.share) {
+    buttons.push(el('button', { class: 'btn', onClick: share }, ['Share…']));
+  }
+  buttons.push(el('button', { class: 'btn ghost', onClick: () => document.body.removeChild(modalBg) }, ['Close']));
+
+  const modal = el('div', { class: 'modal' }, [
+    el('h3', {}, ['Export workout']),
+    el('p', { class: 'small muted' }, [
+      'Tap Copy and paste into Whoop, Notes, or anywhere else.',
+    ]),
+    ta,
+    status,
+    el('div', { class: 'row', style: 'gap:8px; margin-top:12px; flex-wrap:wrap' }, buttons),
+  ]);
+  modalBg.appendChild(modal);
+  document.body.appendChild(modalBg);
+}
+
 // ----- History tab -----
 
 function renderHistoryTab() {
@@ -1017,7 +1292,13 @@ function renderHistoryTab() {
         el('div', { class: 'date' }, [date.toLocaleDateString(undefined, {
           weekday: 'short', month: 'short', day: 'numeric',
         }) + `  ·  Workout ${h.workout}`]),
-        el('div', { class: 'small muted' }, [date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })]),
+        el('div', { class: 'row', style: 'gap:8px' }, [
+          el('button', {
+            class: 'btn sm ghost',
+            title: 'Export this workout',
+            onClick: () => openExportModal(h),
+          }, ['Export']),
+        ]),
       ]),
       ...h.lifts.map(l => el('div', { class: 'line' }, [
         el('span', {}, [`${l.name}  ${l.weight} ${state.unit}`]),
@@ -1047,9 +1328,47 @@ function renderHistoryTab() {
 
 function renderSettingsTab() {
   const wrap = el('div');
+  const activeProfile = rootState.profiles.find(p => p.id === activeProfileId);
   wrap.appendChild(el('div', { class: 'header' }, [
     el('h1', {}, ['Settings']),
+    el('div', { class: 'day-tag' }, [activeProfile ? activeProfile.name : '—']),
   ]));
+
+  // Profile management
+  const profileCard = el('div', { class: 'card' }, [
+    el('h2', {}, ['Profile']),
+    el('div', { class: 'row between' }, [
+      el('div', {}, [
+        el('div', { style: 'font-weight:700; font-size:16px' }, [activeProfile ? activeProfile.name : '—']),
+        el('div', { class: 'small muted' }, [
+          activeProfile && activeProfile.isGuest ? 'Guest profile' : 'Personal profile',
+        ]),
+      ]),
+      el('button', {
+        class: 'btn sm',
+        onClick: () => exitToSelector(),
+      }, ['Switch profile']),
+    ]),
+    el('div', { class: 'row', style: 'gap:8px; margin-top:10px; flex-wrap:wrap' }, [
+      activeProfile && !activeProfile.isGuest ? el('button', {
+        class: 'btn sm ghost',
+        onClick: () => {
+          const name = prompt('Rename profile to:', activeProfile.name);
+          if (!name) return;
+          renameProfile(activeProfile.id, name);
+          render();
+        },
+      }, ['Rename']) : null,
+      activeProfile && !activeProfile.isGuest ? el('button', {
+        class: 'btn sm danger',
+        onClick: () => {
+          if (!confirm(`Delete profile "${activeProfile.name}"? All weights and history for this profile will be erased. This cannot be undone.`)) return;
+          deleteProfile(activeProfile.id);
+        },
+      }, ['Delete profile']) : null,
+    ]),
+  ]);
+  wrap.appendChild(profileCard);
 
   // Units + rest + bar weight
   const general = el('div', { class: 'card' }, [
@@ -1236,6 +1555,7 @@ if ('serviceWorker' in navigator) {
 
 document.addEventListener('DOMContentLoaded', () => {
   wireTabs();
+  document.body.classList.add('no-tabs'); // start on selector — no tabbar visible
   render();
   // Keep timer ticking even when re-rendering pauses
   setInterval(() => { if (restTimer.isActive()) renderRestBar(); }, 500);

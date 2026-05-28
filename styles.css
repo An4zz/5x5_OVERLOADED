@@ -297,6 +297,31 @@ input[type="number"], input[type="text"], select {
   outline: 2px solid var(--text);
   outline-offset: -2px;
 }
+.cal-cell.active-date {
+  outline: 2px dashed var(--warn);
+  outline-offset: -2px;
+}
+.cal-cell.active-mark {
+  /* unused — kept for future styling of the dot mark */
+}
+.cal-cell .cal-badge.active-mark {
+  color: var(--warn);
+  font-size: 10px;
+  line-height: 1;
+}
+.cal-cell.selectable:hover { background: rgba(255,255,255,0.03); }
+/* Workout-tab date edit button */
+.date-edit-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 999px;
+}
+.date-edit-btn-alt {
+  background: rgba(245,158,11,0.18);
+  border-color: var(--warn);
+  color: var(--warn);
+}
 .cal-legend .legend-chip {
   display: inline-block;
   min-width: 30px; padding: 2px 8px;

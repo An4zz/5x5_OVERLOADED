@@ -248,6 +248,18 @@ function startOfWeek(d) {
   x.setDate(x.getDate() - x.getDay());
   return x;
 }
+// Parse a YYYY-MM-DD key into a local Date at noon (avoids TZ-rollover).
+function dateFromKey(key) { return new Date(key + 'T12:00:00'); }
+function prettyDateLabel(key) {
+  const todayKey = dateKey(new Date());
+  if (key === todayKey) return 'Today';
+  const t = startOfDay(new Date());
+  const d = dateFromKey(key);
+  const diffDays = Math.round((startOfDay(d) - t) / 86400000);
+  if (diffDays === -1) return 'Yesterday';
+  if (diffDays === 1) return 'Tomorrow';
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
 
 // History indexed by local date key for fast lookup in the calendar.
 function historyByDate() {
@@ -304,10 +316,18 @@ function startSessionIfNeeded() {
   state.activeSession = {
     workout,
     startedAt: Date.now(),
+    date: dateKey(new Date()), // YYYY-MM-DD; editable, used as the session's calendar date
     lifts,
     accessories: [], // [{ name, target, notes, done }]
   };
   saveState();
+}
+
+// Migrate older sessions that didn't have a `date` field.
+function ensureSessionDate() {
+  if (state.activeSession && !state.activeSession.date) {
+    state.activeSession.date = dateKey(new Date(state.activeSession.startedAt));
+  }
 }
 
 function ensureAccessoriesArray() {
@@ -367,8 +387,10 @@ function finishSession() {
       success,
     });
   }
+  ensureSessionDate();
+  const sessionDate = dateFromKey(state.activeSession.date);
   state.history.unshift({
-    date: new Date(state.activeSession.startedAt).toISOString(),
+    date: sessionDate.toISOString(),
     workout: state.activeSession.workout,
     lifts: liftsLog,
     accessories: (state.activeSession.accessories || []).map(a => ({
@@ -428,14 +450,24 @@ function render() {
 
 function renderWorkoutTab() {
   startSessionIfNeeded();
+  ensureSessionDate();
   const wrap = el('div');
   const session = state.activeSession;
   const workoutName = `Workout ${session.workout}`;
   const lifts = WORKOUTS[session.workout];
+  const dateLabel = prettyDateLabel(session.date);
+  const isToday = session.date === dateKey(new Date());
 
   wrap.appendChild(el('div', { class: 'header' }, [
     el('div', {}, [
-      el('h1', {}, ['Today']),
+      el('div', { class: 'row', style: 'gap:8px; align-items: baseline; flex-wrap: wrap' }, [
+        el('h1', {}, [dateLabel]),
+        el('button', {
+          class: `btn ghost sm date-edit-btn ${isToday ? '' : 'date-edit-btn-alt'}`,
+          title: 'Change workout date',
+          onClick: () => openDatePicker(),
+        }, [isToday ? '📅 Change date' : `📅 ${dateFromKey(session.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`]),
+      ]),
       el('p', { class: 'small' }, [
         `${lifts.map(k => EXERCISES[k].name).join(' · ')}`
       ]),
@@ -717,6 +749,54 @@ function renderAccessoryRow(acc, idx) {
   return row;
 }
 
+function openDatePicker() {
+  ensureSessionDate();
+  const session = state.activeSession;
+  let pickedDate = session.date;
+
+  const modalBg = el('div', { class: 'modal-bg', onClick: (e) => {
+    if (e.target === modalBg) document.body.removeChild(modalBg);
+  }});
+
+  const input = el('input', {
+    type: 'date',
+    value: pickedDate,
+    onChange: (e) => { pickedDate = e.target.value; },
+  });
+
+  const setAndClose = (key) => {
+    session.date = key;
+    saveState();
+    document.body.removeChild(modalBg);
+    render();
+  };
+
+  const todayKey = dateKey(new Date());
+  const yesterdayKey = dateKey(addDays(new Date(), -1));
+
+  const modal = el('div', { class: 'modal' }, [
+    el('h3', {}, ['Workout date']),
+    el('p', { class: 'small muted' }, ['When did this workout happen? The calendar and history will use this date.']),
+    el('div', { class: 'row', style: 'gap:8px; margin-bottom:12px; flex-wrap:wrap' }, [
+      el('button', { class: 'btn sm', onClick: () => setAndClose(todayKey) }, ['Today']),
+      el('button', { class: 'btn sm', onClick: () => setAndClose(yesterdayKey) }, ['Yesterday']),
+    ]),
+    input,
+    el('div', { class: 'row between', style: 'margin-top:14px' }, [
+      el('button', {
+        class: 'btn ghost',
+        onClick: () => document.body.removeChild(modalBg),
+      }, ['Cancel']),
+      el('button', {
+        class: 'btn primary',
+        onClick: () => setAndClose(pickedDate),
+      }, ['Save']),
+    ]),
+  ]);
+  modalBg.appendChild(modal);
+  document.body.appendChild(modalBg);
+}
+
 function openAccessoryPicker() {
   const modalBg = el('div', { class: 'modal-bg', onClick: (e) => {
     if (e.target === modalBg) document.body.removeChild(modalBg);
@@ -829,6 +909,7 @@ function renderCalendarTab() {
 
     // Day cells
     const grid = el('div', { class: 'cal-grid' });
+    const activeSessionDate = state.activeSession && state.activeSession.date;
     for (let i = 0; i < 7; i++) {
       const d = addDays(wkStart, i);
       const k = dateKey(d);
@@ -837,6 +918,7 @@ function renderCalendarTab() {
       const isScheduled = state.scheduleDays.includes(d.getDay());
       const loggedSession = logged[k];
       const projected = upcoming[k];
+      const isActiveDate = activeSessionDate === k;
 
       let cls = 'cal-cell';
       let label = String(d.getDate());
@@ -853,17 +935,25 @@ function renderCalendarTab() {
         badge = el('div', { class: 'cal-badge muted' }, ['—']);
       } else if (isScheduled) {
         cls += ' rest-scheduled';
+      } else {
+        cls += ' selectable';
       }
       if (isToday) cls += ' today';
+      if (isActiveDate && !loggedSession) cls += ' active-date';
 
       const cell = el('div', { class: cls, title: d.toLocaleDateString() }, [
         el('div', { class: 'cal-date' }, [label]),
         badge,
+        isActiveDate && !loggedSession ? el('div', { class: 'cal-badge active-mark' }, ['●']) : null,
       ]);
 
-      // Tap a projected day → jump to Workout tab (only works for today/future)
-      if (projected && !isPast) {
+      // Tap any non-logged day → set this as the active workout date and jump.
+      if (!loggedSession) {
+        cell.style.cursor = 'pointer';
         cell.addEventListener('click', () => {
+          startSessionIfNeeded();
+          state.activeSession.date = k;
+          saveState();
           currentTab = 'workout';
           for (const b of document.querySelectorAll('#tabbar .tab')) {
             b.classList.toggle('active', b.dataset.tab === 'workout');
@@ -897,7 +987,7 @@ function renderCalendarTab() {
       el('span', { class: 'small muted' }, ['= Missed scheduled day']),
     ]),
     el('p', { class: 'small muted', style: 'margin-top:10px' }, [
-      'Tap a future workout day to jump to the Workout tab. Use the A⇆B button on the Workout tab to swap which workout is next.',
+      'Tap any day to set it as your workout date — perfect for catching up on a missed day or marking a workout you did off-schedule. The next scheduled workout shifts automatically. Use the A⇆B button on the Workout tab to swap which workout is up.',
     ]),
   ]));
 

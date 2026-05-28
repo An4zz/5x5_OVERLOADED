@@ -83,6 +83,8 @@ function defaultState() {
     exercises,
     activeSession: null,
     history: [],
+    lastExportAt: null,             // epoch ms of last full-state export
+    backupReminderDismissedAt: null, // epoch ms when user dismissed the banner
   };
 }
 
@@ -473,6 +475,45 @@ function renderWorkoutTab() {
   startSessionIfNeeded();
   ensureSessionDate();
   const wrap = el('div');
+
+  // Backup-overdue nudge — only shown after ≥3 sessions and not within
+  // the recent dismiss window. Single tap takes you straight to Settings.
+  if (isBackupOverdue()) {
+    const daysSince = state.lastExportAt
+      ? Math.floor((Date.now() - state.lastExportAt) / MS_PER_DAY)
+      : null;
+    wrap.appendChild(el('div', { class: 'backup-banner' }, [
+      el('div', { style: 'flex:1; min-width:0' }, [
+        el('div', { style: 'font-weight:700' }, ['Time to back up']),
+        el('div', { class: 'small' }, [
+          daysSince != null
+            ? `Last export ${daysSince} day${daysSince === 1 ? '' : 's'} ago. Tap Back up to save a JSON file.`
+            : `You haven't exported your data yet. Tap Back up to save a JSON file you can keep in iCloud or restore on a new device.`,
+        ]),
+      ]),
+      el('div', { class: 'row', style: 'gap:6px; flex-shrink:0' }, [
+        el('button', {
+          class: 'btn sm primary',
+          onClick: () => { currentTab = 'settings';
+            for (const b of document.querySelectorAll('#tabbar .tab')) {
+              b.classList.toggle('active', b.dataset.tab === 'settings');
+            }
+            render();
+          },
+        }, ['Back up']),
+        el('button', {
+          class: 'btn sm ghost',
+          title: 'Remind me later',
+          onClick: () => {
+            state.backupReminderDismissedAt = Date.now();
+            saveState();
+            render();
+          },
+        }, ['✕']),
+      ]),
+    ]));
+  }
+
   const session = state.activeSession;
   const workoutName = `Workout ${session.workout}`;
   const lifts = WORKOUTS[session.workout];
@@ -1015,6 +1056,94 @@ function renderCalendarTab() {
   return wrap;
 }
 
+// ----- Full backup (export / import all data) -----
+
+const MS_PER_DAY = 86400000;
+const BACKUP_OVERDUE_DAYS = 30;
+const BACKUP_DISMISS_DAYS = 3;
+const BACKUP_MIN_SESSIONS = 3; // don't pester users with no real data yet
+
+function isBackupOverdue() {
+  if (!state || !Array.isArray(state.history)) return false;
+  if (state.history.length < BACKUP_MIN_SESSIONS) return false;
+  const overdue = !state.lastExportAt
+    || (Date.now() - state.lastExportAt) > BACKUP_OVERDUE_DAYS * MS_PER_DAY;
+  if (!overdue) return false;
+  if (state.backupReminderDismissedAt
+      && (Date.now() - state.backupReminderDismissedAt) < BACKUP_DISMISS_DAYS * MS_PER_DAY) {
+    return false;
+  }
+  return true;
+}
+
+async function exportAllState() {
+  const filename = `5x5-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  const text = JSON.stringify(state, null, 2);
+  state.lastExportAt = Date.now();
+  state.backupReminderDismissedAt = null;
+  saveState();
+
+  // iOS Safari / modern browsers: share as a file so it can go to Files,
+  // iCloud Drive, AirDrop, Notes, email, etc.
+  try {
+    if (typeof File !== 'undefined' && navigator.canShare) {
+      const file = new File([text], filename, { type: 'application/json' });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: '5x5 backup' });
+        render();
+        return;
+      }
+    }
+  } catch (e) { /* user cancelled or share unsupported — fall through */ }
+
+  // Fallback: trigger a download (works on desktop browsers)
+  try {
+    const blob = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (e) { /* nothing more we can do */ }
+
+  render();
+}
+
+async function handleImportFile(file) {
+  if (!file) return;
+  let parsed;
+  try {
+    const text = await file.text();
+    parsed = JSON.parse(text);
+  } catch (e) {
+    alert("Couldn't read that file — make sure it's a JSON backup from this app.");
+    return;
+  }
+  if (!parsed || typeof parsed !== 'object' || !parsed.exercises) {
+    alert("That file doesn't look like a 5x5 backup.");
+    return;
+  }
+  const histCount = Array.isArray(parsed.history) ? parsed.history.length : 0;
+  const exportedAt = parsed.lastExportAt
+    ? new Date(parsed.lastExportAt).toLocaleString()
+    : 'unknown';
+  const ok = confirm(
+    `Restore from this backup?\n\n` +
+    `• ${histCount} session${histCount === 1 ? '' : 's'} in history\n` +
+    `• Backup created: ${exportedAt}\n\n` +
+    `This OVERWRITES all data currently on this device. Your active ` +
+    `session (if any) will also be replaced.`
+  );
+  if (!ok) return;
+  state = mergeState(parsed);
+  saveState();
+  render();
+  alert('Backup restored.');
+}
+
 // ----- Workout export -----
 
 // Format a finished workout (history entry) as a plain-text block.
@@ -1312,16 +1441,28 @@ function renderSettingsTab() {
       }, ['Erase everything']),
       el('button', {
         class: 'btn ghost',
-        onClick: () => {
-          const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `5x5-backup-${new Date().toISOString().slice(0,10)}.json`;
-          a.click();
-          setTimeout(() => URL.revokeObjectURL(url), 1000);
-        },
+        onClick: () => exportAllState(),
       }, ['Export JSON']),
+      el('button', {
+        class: 'btn ghost',
+        onClick: () => document.getElementById('import-file-input').click(),
+      }, ['Import JSON']),
+      el('input', {
+        id: 'import-file-input',
+        type: 'file',
+        accept: '.json,application/json',
+        style: 'display:none',
+        onChange: (e) => {
+          handleImportFile(e.target.files && e.target.files[0]);
+          e.target.value = ''; // allow re-importing the same file
+        },
+      }),
+    ]),
+    el('p', { class: 'small muted', style: 'margin-top:10px' }, [
+      state.lastExportAt
+        ? `Last backup: ${new Date(state.lastExportAt).toLocaleDateString(undefined, { month:'short', day:'numeric', year:'numeric' })} · `
+        : 'No backup yet · ',
+      'Export saves a JSON file you can store in iCloud Drive, Notes, or email. Import overwrites everything on this device.',
     ]),
     el('p', { class: 'small muted', style: 'margin-top:10px' }, [
       'StrongLifts 5x5 rules: add weight on a clean ',

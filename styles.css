@@ -338,6 +338,20 @@ input[type="number"], input[type="text"], select {
   margin-top: 8px;
 }
 
+/* === Backup reminder banner === */
+.backup-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(245,158,11,0.18);
+  border: 1px solid var(--warn);
+  color: #fde68a;
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+}
+.backup-banner .small { color: #fde68a; opacity: 0.85; }
+
 .cal-legend .legend-chip {
   display: inline-block;
   min-width: 30px; padding: 2px 8px;

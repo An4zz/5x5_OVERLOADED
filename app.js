@@ -23,9 +23,9 @@ const WORKOUTS = {
 
 const DEFAULT_REST_SECS = 180; // 3 minutes — canonical StrongLifts default
 const DEFAULT_UNIT = 'lb';     // 'lb' or 'kg'
-const STORAGE_KEY_V1 = 'fivebyfive.v1';   // legacy single-profile store (read-only, for migration)
-const STORAGE_KEY = 'fivebyfive.v2';      // profile-aware store
-const MAX_NAMED_PROFILES = 3;
+const STORAGE_KEY_V1 = 'fivebyfive.v1';   // legacy single-profile store (read-only fallback)
+const STORAGE_KEY_V2 = 'fivebyfive.v2';   // legacy profile-wrapped store (read-only fallback)
+const STORAGE_KEY    = 'fivebyfive.v3';   // current store: single profile
 
 // Weekday helpers (JS Date.getDay(): 0=Sun ... 6=Sat)
 const WEEKDAYS = [
@@ -61,14 +61,9 @@ const ACCESSORY_PRESETS = [
 const DEFAULT_PLATES_LB = [45, 35, 25, 10, 5, 2.5];
 const DEFAULT_PLATES_KG = [25, 20, 15, 10, 5, 2.5, 1.25];
 
-// ---------- State (profile-aware) ----------
-//
-// rootState wraps a list of profiles; each profile owns the full lifting dataset
-// (weights, schedule, history, etc.). `state` is rebound to the active profile's
-// data after the user picks a profile from the selector screen. All existing
-// state.foo references continue to work because the variable just re-points.
+// ---------- State (single profile) ----------
 
-function defaultProfileData() {
+function defaultState() {
   const exercises = {};
   for (const [key, def] of Object.entries(EXERCISES)) {
     exercises[key] = {
@@ -91,127 +86,46 @@ function defaultProfileData() {
   };
 }
 
-function mergeProfileData(data) {
-  const fresh = defaultProfileData();
+function mergeState(data) {
+  const fresh = defaultState();
   return Object.assign({}, fresh, data || {}, {
     exercises: Object.assign({}, fresh.exercises, (data && data.exercises) || {}),
   });
 }
 
-function defaultRootState() {
-  return {
-    v: 2,
-    profiles: [
-      { id: 'guest', name: 'Guest', isGuest: true, data: defaultProfileData() },
-    ],
-  };
-}
-
-function loadRootState() {
-  // Try v2 first
+// Load with fall-through across schema versions so existing user data survives:
+//   v3 (current) → v2 (profile-wrapped) → v1 (original single-state) → defaults.
+// Older keys are left in place as a passive backup.
+function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      parsed.profiles = (parsed.profiles || []).map(p => ({
-        ...p, data: mergeProfileData(p.data),
-      }));
-      // Ensure Guest always exists
-      if (!parsed.profiles.some(p => p.isGuest)) {
-        parsed.profiles.push({ id: 'guest', name: 'Guest', isGuest: true, data: defaultProfileData() });
-      }
-      return parsed;
-    }
+    if (raw) return mergeState(JSON.parse(raw));
   } catch (e) {}
-
-  // Migrate from v1 single-profile store
   try {
-    const v1raw = localStorage.getItem(STORAGE_KEY_V1);
-    if (v1raw) {
-      const v1 = JSON.parse(v1raw);
-      return {
-        v: 2,
-        profiles: [
-          { id: 'p1', name: 'Me', data: mergeProfileData(v1) },
-          { id: 'guest', name: 'Guest', isGuest: true, data: defaultProfileData() },
-        ],
-      };
+    const raw = localStorage.getItem(STORAGE_KEY_V2);
+    if (raw) {
+      const wrapper = JSON.parse(raw) || {};
+      const named = (wrapper.profiles || []).find(p => p && !p.isGuest && p.data);
+      const guest = (wrapper.profiles || []).find(p => p && p.isGuest && p.data);
+      const picked = (named && named.data) || (guest && guest.data);
+      if (picked) return mergeState(picked);
     }
   } catch (e) {}
-
-  return defaultRootState();
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_V1);
+    if (raw) return mergeState(JSON.parse(raw));
+  } catch (e) {}
+  return defaultState();
 }
 
 function saveState() {
-  // saveState persists the entire root state. Because `state` is a reference
-  // to rootState.profiles[X].data, mutations flow through automatically.
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(rootState));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
-let rootState = loadRootState();
-// Persist immediately so any v1→v2 migration is saved on first load.
-try { localStorage.setItem(STORAGE_KEY, JSON.stringify(rootState)); } catch (e) {}
-let state = null;             // active profile's data; null while selector is shown
-let activeProfileId = null;
-let currentScreen = 'selector'; // 'selector' | 'tabs'
+let state = loadState();
+// Persist immediately so any version migration is committed on first load.
+try { saveState(); } catch (e) {}
 let currentTab = 'workout';
-
-function selectProfile(id) {
-  const p = rootState.profiles.find(p => p.id === id);
-  if (!p) return;
-  state = p.data;
-  activeProfileId = id;
-  currentScreen = 'tabs';
-  currentTab = 'workout';
-  document.body.classList.remove('no-tabs');
-  // Reset tab active classes to "workout"
-  for (const b of document.querySelectorAll('#tabbar .tab')) {
-    b.classList.toggle('active', b.dataset.tab === 'workout');
-  }
-  render();
-}
-
-function exitToSelector() {
-  state = null;
-  activeProfileId = null;
-  currentScreen = 'selector';
-  document.body.classList.add('no-tabs');
-  render();
-}
-
-function createProfile(name) {
-  const trimmed = (name || '').trim().slice(0, 24);
-  if (!trimmed) return null;
-  const namedCount = rootState.profiles.filter(p => !p.isGuest).length;
-  if (namedCount >= MAX_NAMED_PROFILES) return null;
-  let i = 1;
-  while (rootState.profiles.some(p => p.id === `p${i}`)) i++;
-  const newP = { id: `p${i}`, name: trimmed, data: defaultProfileData() };
-  // Insert before guest so order stays named...named...guest
-  const guestIdx = rootState.profiles.findIndex(p => p.isGuest);
-  if (guestIdx >= 0) rootState.profiles.splice(guestIdx, 0, newP);
-  else rootState.profiles.push(newP);
-  saveState();
-  return newP;
-}
-
-function renameProfile(id, name) {
-  const p = rootState.profiles.find(p => p.id === id);
-  if (!p || p.isGuest) return;
-  const trimmed = (name || '').trim().slice(0, 24);
-  if (!trimmed) return;
-  p.name = trimmed;
-  saveState();
-}
-
-function deleteProfile(id) {
-  const idx = rootState.profiles.findIndex(p => p.id === id);
-  if (idx < 0) return;
-  if (rootState.profiles[idx].isGuest) return; // can't delete Guest
-  rootState.profiles.splice(idx, 1);
-  if (activeProfileId === id) exitToSelector();
-  else saveState();
-}
 
 // ---------- Program rules ----------
 
@@ -546,77 +460,11 @@ const root = () => document.getElementById('app');
 function render() {
   const r = root();
   r.innerHTML = '';
-  if (currentScreen === 'selector') {
-    r.appendChild(renderProfileSelector());
-    return;
-  }
-  if (!state) { exitToSelector(); return; }
   if (currentTab === 'workout') r.appendChild(renderWorkoutTab());
   else if (currentTab === 'calendar') r.appendChild(renderCalendarTab());
   else if (currentTab === 'history') r.appendChild(renderHistoryTab());
   else if (currentTab === 'settings') r.appendChild(renderSettingsTab());
   renderRestBar();
-}
-
-// ----- Profile selector screen -----
-
-function renderProfileSelector() {
-  const wrap = el('div', { class: 'selector' });
-  wrap.appendChild(el('h1', { class: 'selector-title' }, ["Who's lifting?"]));
-  wrap.appendChild(el('p', { class: 'small muted selector-sub' }, [
-    'Each profile has its own weights, schedule, and history.',
-  ]));
-
-  const named = rootState.profiles.filter(p => !p.isGuest);
-  const guest = rootState.profiles.find(p => p.isGuest);
-
-  const grid = el('div', { class: 'profile-grid' });
-  for (let i = 0; i < MAX_NAMED_PROFILES; i++) {
-    const p = named[i];
-    if (p) grid.appendChild(renderProfileTile(p));
-    else grid.appendChild(renderAddTile());
-  }
-  if (guest) grid.appendChild(renderProfileTile(guest));
-  wrap.appendChild(grid);
-
-  return wrap;
-}
-
-function renderProfileTile(p) {
-  const sessions = (p.data.history || []).length;
-  return el('button', {
-    class: `profile-tile ${p.isGuest ? 'guest' : ''}`,
-    onClick: () => selectProfile(p.id),
-  }, [
-    el('div', { class: 'profile-avatar' }, [(p.name || '?').slice(0, 1).toUpperCase()]),
-    el('div', { class: 'profile-name' }, [p.name]),
-    el('div', { class: 'profile-meta small muted' }, [
-      sessions === 0 ? 'no sessions yet' : `${sessions} session${sessions === 1 ? '' : 's'}`,
-    ]),
-  ]);
-}
-
-function renderAddTile() {
-  return el('button', {
-    class: 'profile-tile add',
-    onClick: () => promptCreateProfile(),
-  }, [
-    el('div', { class: 'profile-avatar add' }, ['+']),
-    el('div', { class: 'profile-name' }, ['Add profile']),
-    el('div', { class: 'profile-meta small muted' }, ['']),
-  ]);
-}
-
-function promptCreateProfile() {
-  const name = prompt('New profile name:');
-  if (name === null) return;
-  const p = createProfile(name);
-  if (!p) {
-    if ((name || '').trim() === '') return;
-    alert(`You can have up to ${MAX_NAMED_PROFILES} named profiles.`);
-    return;
-  }
-  selectProfile(p.id);
 }
 
 // ----- Workout tab -----
@@ -1328,47 +1176,9 @@ function renderHistoryTab() {
 
 function renderSettingsTab() {
   const wrap = el('div');
-  const activeProfile = rootState.profiles.find(p => p.id === activeProfileId);
   wrap.appendChild(el('div', { class: 'header' }, [
     el('h1', {}, ['Settings']),
-    el('div', { class: 'day-tag' }, [activeProfile ? activeProfile.name : '—']),
   ]));
-
-  // Profile management
-  const profileCard = el('div', { class: 'card' }, [
-    el('h2', {}, ['Profile']),
-    el('div', { class: 'row between' }, [
-      el('div', {}, [
-        el('div', { style: 'font-weight:700; font-size:16px' }, [activeProfile ? activeProfile.name : '—']),
-        el('div', { class: 'small muted' }, [
-          activeProfile && activeProfile.isGuest ? 'Guest profile' : 'Personal profile',
-        ]),
-      ]),
-      el('button', {
-        class: 'btn sm',
-        onClick: () => exitToSelector(),
-      }, ['Switch profile']),
-    ]),
-    el('div', { class: 'row', style: 'gap:8px; margin-top:10px; flex-wrap:wrap' }, [
-      activeProfile && !activeProfile.isGuest ? el('button', {
-        class: 'btn sm ghost',
-        onClick: () => {
-          const name = prompt('Rename profile to:', activeProfile.name);
-          if (!name) return;
-          renameProfile(activeProfile.id, name);
-          render();
-        },
-      }, ['Rename']) : null,
-      activeProfile && !activeProfile.isGuest ? el('button', {
-        class: 'btn sm danger',
-        onClick: () => {
-          if (!confirm(`Delete profile "${activeProfile.name}"? All weights and history for this profile will be erased. This cannot be undone.`)) return;
-          deleteProfile(activeProfile.id);
-        },
-      }, ['Delete profile']) : null,
-    ]),
-  ]);
-  wrap.appendChild(profileCard);
 
   // Units + rest + bar weight
   const general = el('div', { class: 'card' }, [
@@ -1555,7 +1365,6 @@ if ('serviceWorker' in navigator) {
 
 document.addEventListener('DOMContentLoaded', () => {
   wireTabs();
-  document.body.classList.add('no-tabs'); // start on selector — no tabbar visible
   render();
   // Keep timer ticking even when re-rendering pauses
   setInterval(() => { if (restTimer.isActive()) renderRestBar(); }, 500);

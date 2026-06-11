@@ -50,6 +50,80 @@ body.theme-light .legend-chip.workout-b { background: #ede9fe; color: #6d28d9; b
 body.theme-light .legend-chip.done      { background: #dcfce7; color: #166534; }
 body.theme-light .legend-chip.missed    { background: #fee2e2; color: #991b1b; }
 
+/* ========== Team themes (all dark-style) ========== */
+
+/* NY Yankees — navy + crisp white/silver */
+body.theme-yankees {
+  --bg: #0a1832;
+  --surface: #15295a;
+  --surface-2: #1f3a7d;
+  --border: #2f4f9d;
+  --text: #ffffff;
+  --muted: #a8c1e6;
+  --accent: #c4d4ee;          /* silvery white-blue */
+  --good: #22c55e;
+  --bad:  #ef4444;
+  --warn: #f59e0b;
+}
+body.theme-yankees .cal-cell.workout-b { background: rgba(196,212,238,0.10); border-color: #c4d4ee; color: #dbe6f8; }
+body.theme-yankees .legend-chip.workout-b { background: rgba(196,212,238,0.10); border-color: #c4d4ee; color: #dbe6f8; }
+body.theme-yankees .btn.primary, body.theme-yankees .rest-bar { color: #0a1832; }
+body.theme-yankees .day-tag { background: rgba(196,212,238,0.18); color: var(--text); }
+
+/* Seattle Kraken — deep sea + ice blue, Kraken red */
+body.theme-kraken {
+  --bg: #001628;
+  --surface: #082a47;
+  --surface-2: #103e63;
+  --border: #1a5588;
+  --text: #e6f7fb;
+  --muted: #7da6b3;
+  --accent: #99D9D9;          /* ice blue */
+  --good: #22c55e;
+  --bad:  #E9072B;            /* Kraken red */
+  --warn: #f59e0b;
+}
+body.theme-kraken .cal-cell.workout-b { background: rgba(233,7,43,0.20); border-color: #E9072B; color: #fda4af; }
+body.theme-kraken .legend-chip.workout-b { background: rgba(233,7,43,0.20); border-color: #E9072B; color: #fda4af; }
+body.theme-kraken .btn.primary, body.theme-kraken .rest-bar { color: #001628; }
+body.theme-kraken .day-tag { background: rgba(153,217,217,0.18); color: var(--accent); }
+
+/* Seattle Mariners — navy + Northwest teal */
+body.theme-mariners {
+  --bg: #0c2c56;
+  --surface: #143e76;
+  --surface-2: #1e5390;
+  --border: #2b6dac;
+  --text: #ffffff;
+  --muted: #9cbce0;
+  --accent: #1cb3a4;          /* vibrant Northwest teal */
+  --good: #22c55e;
+  --bad:  #ef4444;
+  --warn: #f59e0b;
+}
+body.theme-mariners .cal-cell.workout-b { background: rgba(28,179,164,0.22); border-color: var(--accent); color: #99f6e4; }
+body.theme-mariners .legend-chip.workout-b { background: rgba(28,179,164,0.22); border-color: var(--accent); color: #99f6e4; }
+body.theme-mariners .btn.primary, body.theme-mariners .rest-bar { color: #0c2c56; }
+body.theme-mariners .day-tag { background: rgba(28,179,164,0.22); color: #99f6e4; }
+
+/* NY Rangers — Broadway blue + red */
+body.theme-rangers {
+  --bg: #001a4d;
+  --surface: #0a2670;
+  --surface-2: #143497;
+  --border: #2954c4;
+  --text: #ffffff;
+  --muted: #a3b8e0;
+  --accent: #4477e3;          /* Rangers blue, brightened */
+  --good: #22c55e;
+  --bad:  #CE1126;            /* Rangers red */
+  --warn: #f59e0b;
+}
+body.theme-rangers .cal-cell.workout-b { background: rgba(206,17,38,0.20); border-color: #CE1126; color: #fda4af; }
+body.theme-rangers .legend-chip.workout-b { background: rgba(206,17,38,0.20); border-color: #CE1126; color: #fda4af; }
+body.theme-rangers .btn.primary, body.theme-rangers .rest-bar { color: #001a4d; }
+body.theme-rangers .day-tag { background: rgba(68,119,227,0.22); color: #c7d8fa; }
+
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {

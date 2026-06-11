@@ -303,9 +303,11 @@ function fmtTime(secs) {
 
 // ---------- Theme ----------
 
+const THEMES = ['auto', 'dark', 'light', 'yankees', 'kraken', 'mariners', 'rangers'];
+
 function applyTheme(theme) {
   const cls = document.body.classList;
-  cls.remove('theme-dark', 'theme-light', 'theme-auto');
+  for (const t of THEMES) cls.remove('theme-' + t);
   if (theme === 'auto') {
     const isLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
     cls.add(isLight ? 'theme-light' : 'theme-dark');
@@ -1486,9 +1488,13 @@ function renderSettingsTab() {
         applyTheme(state.theme);
       },
     }, [
-      optionEl('auto', 'Auto (follow system)', state.theme || 'auto'),
-      optionEl('dark', 'Dark', state.theme || 'auto'),
-      optionEl('light', 'Light', state.theme || 'auto'),
+      optionEl('auto',     'Auto (follow system)',    state.theme || 'auto'),
+      optionEl('dark',     'Dark',                    state.theme || 'auto'),
+      optionEl('light',    'Light',                   state.theme || 'auto'),
+      optionEl('yankees',  '⚾ NY Yankees',           state.theme || 'auto'),
+      optionEl('kraken',   '🐙 Seattle Kraken',       state.theme || 'auto'),
+      optionEl('mariners', '⚓ Seattle Mariners',     state.theme || 'auto'),
+      optionEl('rangers',  '🏒 NY Rangers',           state.theme || 'auto'),
     ])),
   ]);
   wrap.appendChild(general);

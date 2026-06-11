@@ -86,6 +86,7 @@ function defaultState() {
     lastExportAt: null,             // epoch ms of last full-state export
     backupReminderDismissedAt: null, // epoch ms when user dismissed the banner
     warmupsEnabled: false,          // show + track warm-up sets per lift
+    theme: 'auto',                  // 'auto' | 'dark' | 'light'
   };
 }
 
@@ -298,6 +299,28 @@ function fmtTime(secs) {
   const m = Math.floor(secs / 60);
   const s = secs % 60;
   return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+// ---------- Theme ----------
+
+function applyTheme(theme) {
+  const cls = document.body.classList;
+  cls.remove('theme-dark', 'theme-light', 'theme-auto');
+  if (theme === 'auto') {
+    const isLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+    cls.add(isLight ? 'theme-light' : 'theme-dark');
+    cls.add('theme-auto');
+  } else {
+    cls.add('theme-' + theme);
+  }
+}
+
+if (typeof window !== 'undefined' && window.matchMedia) {
+  try {
+    window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+      if (state && state.theme === 'auto') applyTheme('auto');
+    });
+  } catch (e) { /* older browsers — ignore */ }
 }
 
 // ---------- Date helpers ----------
@@ -590,15 +613,26 @@ function renderWorkoutTab() {
         `${lifts.map(k => EXERCISES[k].name).join(' · ')}`
       ]),
     ]),
-    el('button', {
-      class: 'day-tag day-tag-btn',
-      title: 'Swap A↔B for this session',
-      onClick: () => {
-        if (!confirm(`Switch to Workout ${session.workout === 'A' ? 'B' : 'A'}? Any unlogged sets will reset.`)) return;
-        swapNextWorkout();
-        render();
-      },
-    }, [workoutName, ' ⇆']),
+    el('div', { class: 'row', style: 'gap:6px; flex-shrink:0' }, [
+      el('button', {
+        class: `warmup-toggle-chip ${state.warmupsEnabled ? 'on' : ''}`,
+        title: state.warmupsEnabled ? 'Warm-ups on — tap to hide' : 'Warm-ups off — tap to show',
+        onClick: () => {
+          state.warmupsEnabled = !state.warmupsEnabled;
+          saveState();
+          render();
+        },
+      }, ['🔥 Warm-up']),
+      el('button', {
+        class: 'day-tag day-tag-btn',
+        title: 'Swap A↔B for this session',
+        onClick: () => {
+          if (!confirm(`Switch to Workout ${session.workout === 'A' ? 'B' : 'A'}? Any unlogged sets will reset.`)) return;
+          swapNextWorkout();
+          render();
+        },
+      }, [workoutName, ' ⇆']),
+    ]),
   ]));
 
   for (const key of lifts) {
@@ -1445,23 +1479,17 @@ function renderSettingsTab() {
         saveState();
       },
     })),
-    el('label', { class: 'toggle-row' }, [
-      el('div', {}, [
-        el('div', { style: 'font-weight:600; font-size:14px; color: var(--text)' }, ['Warm-up sets']),
-        el('div', { class: 'small muted' }, [
-          'Show ramped warm-up sets above each lift (2× empty bar, then ramp to working weight).',
-        ]),
-      ]),
-      el('input', {
-        type: 'checkbox',
-        checked: state.warmupsEnabled,
-        onChange: (e) => {
-          state.warmupsEnabled = !!e.target.checked;
-          saveState();
-          render();
-        },
-      }),
-    ]),
+    field('Theme', el('select', {
+      onChange: (e) => {
+        state.theme = e.target.value;
+        saveState();
+        applyTheme(state.theme);
+      },
+    }, [
+      optionEl('auto', 'Auto (follow system)', state.theme || 'auto'),
+      optionEl('dark', 'Dark', state.theme || 'auto'),
+      optionEl('light', 'Light', state.theme || 'auto'),
+    ])),
   ]);
   wrap.appendChild(general);
 
@@ -1619,6 +1647,7 @@ if ('serviceWorker' in navigator) {
 
 document.addEventListener('DOMContentLoaded', () => {
   wireTabs();
+  applyTheme(state.theme || 'auto');
   render();
   // Keep timer ticking even when re-rendering pauses
   setInterval(() => { if (restTimer.isActive()) renderRestBar(); }, 500);

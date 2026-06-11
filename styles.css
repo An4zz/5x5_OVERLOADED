@@ -1,4 +1,6 @@
 :root {
+  /* Dark theme — used implicitly when no theme class is set and as the
+     baseline that body.theme-light overrides below. */
   --bg: #0b1220;
   --surface: #131b2e;
   --surface-2: #1b2540;
@@ -13,6 +15,40 @@
   --safe-top: env(safe-area-inset-top, 0);
   --safe-bot: env(safe-area-inset-bottom, 0);
 }
+
+body.theme-light {
+  --bg: #f4f6fb;
+  --surface: #ffffff;
+  --surface-2: #eef2f8;
+  --border: #cbd5e1;
+  --text: #0f172a;
+  --muted: #64748b;
+  --accent: #2563eb;
+  --good: #16a34a;
+  --bad: #dc2626;
+  --warn: #b45309;
+}
+/* Plate chips in light mode: pull back the saturation so they stay legible. */
+body.theme-light .plate.heavy { background: #fee2e2; border-color: var(--bad); color: #991b1b; }
+body.theme-light .plate.med   { background: #dbeafe; border-color: var(--accent); color: #1e40af; }
+body.theme-light .plate.lite  { background: #dcfce7; border-color: var(--good); color: #166534; }
+/* Calendar workout cells need a touch more contrast in light mode. */
+body.theme-light .cal-cell.workout-a { background: #dbeafe; color: #1e40af; }
+body.theme-light .cal-cell.workout-b { background: #ede9fe; color: #6d28d9; border-color: #8b5cf6; }
+body.theme-light .cal-cell.done      { background: #dcfce7; color: #166534; }
+body.theme-light .cal-cell.missed    { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+body.theme-light .cal-cell.today     { outline-color: var(--text); }
+body.theme-light .set.done           { background: #dcfce7; color: #166534; }
+body.theme-light .set.fail           { background: #fee2e2; color: #991b1b; }
+body.theme-light .day-tag            { background: #e0e7ff; color: var(--accent); }
+body.theme-light .rest-bar           { color: white; }
+body.theme-light .backup-banner      { background: #fef3c7; border-color: var(--warn); color: #92400e; }
+body.theme-light .backup-banner .small { color: #92400e; }
+body.theme-light .warmup-tile.done   { background: #fef3c7; color: #92400e; border-color: var(--warn); }
+body.theme-light .legend-chip.workout-a { background: #dbeafe; color: #1e40af; }
+body.theme-light .legend-chip.workout-b { background: #ede9fe; color: #6d28d9; border-color: #8b5cf6; }
+body.theme-light .legend-chip.done      { background: #dcfce7; color: #166534; }
+body.theme-light .legend-chip.missed    { background: #fee2e2; color: #991b1b; }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
@@ -337,6 +373,29 @@ input[type="number"], input[type="text"], select {
   resize: vertical;
   margin-top: 8px;
 }
+
+/* === Warm-up toggle chip on Workout header === */
+.warmup-toggle-chip {
+  appearance: none;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.08s ease, background 0.15s ease, color 0.15s ease;
+}
+.warmup-toggle-chip:active { transform: scale(0.96); }
+.warmup-toggle-chip.on {
+  background: rgba(245,158,11,0.22);
+  border-color: var(--warn);
+  color: var(--warn);
+}
+body.theme-light .warmup-toggle-chip.on { background: #fef3c7; color: #92400e; border-color: var(--warn); }
 
 /* === Warm-up sets === */
 .warmup-head {

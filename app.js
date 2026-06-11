@@ -85,6 +85,7 @@ function defaultState() {
     history: [],
     lastExportAt: null,             // epoch ms of last full-state export
     backupReminderDismissedAt: null, // epoch ms when user dismissed the banner
+    warmupsEnabled: false,          // show + track warm-up sets per lift
   };
 }
 
@@ -135,6 +136,51 @@ let currentTab = 'workout';
 function roundWeight(w) {
   const step = state.unit === 'lb' ? 5 : 2.5;
   return Math.round(w / step) * step;
+}
+
+// Compute warm-up sets for a given working weight, following the StrongLifts
+// pattern: 2× empty bar, then ramp to (but not including) the working weight,
+// with reps tapering down. Returns [] when the working weight is too close to
+// the bar for warm-ups to be useful.
+function computeWarmups(workingWeight, barWeight) {
+  const w = workingWeight;
+  if (!w || w <= barWeight + 10) return [];
+  const round = (x) => roundWeight(x);
+  const result = [];
+  // Always start with the empty bar 2×5
+  result.push({ weight: barWeight, reps: 5 });
+  result.push({ weight: barWeight, reps: 5 });
+
+  const ratio = w / barWeight;
+  if (ratio <= 1.5) {
+    const mid = round((w + barWeight) / 2);
+    if (mid > barWeight && mid < w) result.push({ weight: mid, reps: 3 });
+  } else if (ratio <= 3) {
+    // Medium load: two ramp sets
+    const a = round(w * 0.6);
+    const b = round(w * 0.8);
+    if (a > barWeight) result.push({ weight: a, reps: 5 });
+    if (b > a && b < w) result.push({ weight: b, reps: 3 });
+  } else {
+    // Heavy load: three ramp sets
+    const a = round(w * 0.5);
+    const b = round(w * 0.7);
+    const c = round(w * 0.85);
+    if (a > barWeight) result.push({ weight: a, reps: 5 });
+    if (b > a) result.push({ weight: b, reps: 3 });
+    if (c > b && c < w) result.push({ weight: c, reps: 2 });
+  }
+  // Drop any duplicates that round-collapsed
+  const out = [];
+  for (const s of result) {
+    if (!out.length || out[out.length-1].weight !== s.weight || out[out.length-1].reps !== s.reps) {
+      out.push(s);
+    } else {
+      // keep duplicates only for the 2× empty bar (first two entries)
+      if (out.length < 2 && s.weight === barWeight) out.push(s);
+    }
+  }
+  return out;
 }
 
 function applyResult(exerciseKey, success) {
@@ -401,11 +447,21 @@ function finishSession() {
     const def = EXERCISES[key];
     const success = isExerciseSuccess(key);
     const usedWeight = currentWeight(key); // capture BEFORE applyResult mutates it
+    // Snapshot which warm-ups were marked done at session-finish time
+    let warmupsCompleted = [];
+    if (state.warmupsEnabled) {
+      const computed = computeWarmups(usedWeight, state.barWeight);
+      const flags = Array.isArray(lift.warmupsDone) ? lift.warmupsDone : [];
+      warmupsCompleted = computed
+        .map((w, i) => flags[i] ? { weight: w.weight, reps: w.reps } : null)
+        .filter(Boolean);
+    }
     applyResult(key, success);
     liftsLog.push({
       key,
       name: def.name,
       weight: usedWeight,
+      warmups: warmupsCompleted,
       sets: lift.sets.slice(),
       success,
     });
@@ -623,6 +679,42 @@ function renderExerciseCard(key) {
   } else {
     card.appendChild(el('p', { class: 'small muted', style: 'margin-bottom:10px' },
       [`Empty bar (${state.barWeight} ${state.unit})`]));
+  }
+
+  // Warm-up sets (optional, above working sets)
+  if (state.warmupsEnabled) {
+    const warmups = computeWarmups(w, state.barWeight);
+    if (warmups.length) {
+      if (!Array.isArray(lift.warmupsDone)) lift.warmupsDone = [];
+      const warmHead = el('div', { class: 'warmup-head' }, [
+        el('span', { class: 'small muted' }, ['Warm-up']),
+        el('span', { class: 'small muted' }, [
+          `${lift.warmupsDone.filter(Boolean).length}/${warmups.length} done`,
+        ]),
+      ]);
+      card.appendChild(warmHead);
+      const wgrid = el('div', { class: 'warmup-grid' });
+      for (let i = 0; i < warmups.length; i++) {
+        const wu = warmups[i];
+        const isDone = lift.warmupsDone[i] === true;
+        wgrid.appendChild(el('div', {
+          class: `warmup-tile ${isDone ? 'done' : ''}`,
+          onClick: () => {
+            lift.warmupsDone[i] = !isDone;
+            saveState();
+            if (lift.warmupsDone[i]) {
+              // Shorter rest for warm-ups: 60s, capped by user's main rest setting
+              restTimer.start(Math.min(60, state.restSecs));
+            }
+            render();
+          },
+        }, [
+          el('div', { class: 'warmup-weight' }, [`${wu.weight}`]),
+          el('div', { class: 'warmup-reps' }, [`×${wu.reps}`]),
+        ]));
+      }
+      card.appendChild(wgrid);
+    }
   }
 
   // Sets grid
@@ -1166,6 +1258,10 @@ function formatWorkoutText(entry) {
       : `sets: ${l.sets.join(', ')}`;
     const flag = l.success ? '' : '  ✗';
     lines.push(`${n}. ${l.name} — ${setsText} @ ${l.weight} ${state.unit}${flag}`);
+    if (Array.isArray(l.warmups) && l.warmups.length) {
+      const wuTxt = l.warmups.map(w => `${w.weight}×${w.reps}`).join(', ');
+      lines.push(`   Warm-up: ${wuTxt}`);
+    }
     n++;
   }
 
@@ -1349,6 +1445,23 @@ function renderSettingsTab() {
         saveState();
       },
     })),
+    el('label', { class: 'toggle-row' }, [
+      el('div', {}, [
+        el('div', { style: 'font-weight:600; font-size:14px; color: var(--text)' }, ['Warm-up sets']),
+        el('div', { class: 'small muted' }, [
+          'Show ramped warm-up sets above each lift (2× empty bar, then ramp to working weight).',
+        ]),
+      ]),
+      el('input', {
+        type: 'checkbox',
+        checked: state.warmupsEnabled,
+        onChange: (e) => {
+          state.warmupsEnabled = !!e.target.checked;
+          saveState();
+          render();
+        },
+      }),
+    ]),
   ]);
   wrap.appendChild(general);
 
